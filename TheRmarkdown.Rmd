@@ -1,0 +1,149 @@
+---
+title: 'Stripe: Data Analyst, Written Project Assessment'
+author: "Myles Thomas"
+date: "2/8/2021"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load Libraries
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(stringr)
+library(ggplot2)
+library(forecast)
+library(data.table)
+library(flextable)
+
+# More libraries
+library(fpp2)
+#install.packages("fpp2", dependencies = T)
+#qcement
+library(xts)
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(hrbrthemes)
+```
+
+
+
+This assignment is part of the interviewing process with Stripe for a data analyst role. Using over 1 million transactions on the Stripe database from the year of 2018, this time series data is to be used to make predictions on the future.
+
+## Using the data provided, please provide an estimate for the amount of money we should expect to be paid out on Jan. 1, 2019 (the day after the last day in the dataset).
+
+
+The dataset payouts.csv has information on the date, number of transactions, and amount of the transaction for various merchant id's.
+
+```{r}
+# Load datasets
+payouts <- read.csv("payouts.csv")
+
+# Show the top 3
+head(payouts[ , 3:5], 3)
+```
+
+
+
+Add a total amount column and plot the time series by total amount of money received by day.
+
+
+```{r,echo=FALSE}
+# Add column 'total.amount' to account for amount sent/received when the count is greater than 1
+df <- payouts %>% mutate(total.amt = count*amount)
+
+# Converting the data column from String into Date so it can be analyzed in order, possibility for Time Series/Forecast
+# Keep date but remove time, so grab the first 10 chars only
+df$DateNew <- substr(df$date,1,10)
+
+# Turn from 'char' into 'Date' type
+df$DateNew <- as.Date(df$DateNew)
+
+# Plot amount of transactional money, by date
+# First aggregate the data to get the amount that comes in by the day
+df_datenew <- tapply(df$total.amt, df$DateNew, FUN=sum)
+df_datenew <- as.data.frame(df_datenew)
+df_datenew$DATE <- row.names(df_datenew)
+df_datenew$DailyReceived <- df_datenew$df_datenew
+df_datenew$DATE <- as.Date(df_datenew$DATE)
+
+ggplot(df_datenew, aes(DATE, DailyReceived)) + geom_line() + ggtitle("Plotting the total amount of money received based on the day", subtitle = "To check whether to perform time series forecasting, \n linear regression, or weighted average") +
+  xlab("Date, from Jan1 to Dec31") + ylab("Total amount of money received on this day") + ylim(0, 1600000000)
+```
+
+
+Here is the same graph, but an interactive version to see which dates had which dollar amount. (Only visible on HTML output)
+
+```{r}
+
+data <- data.frame(date = df_datenew$DATE, value = df_datenew$DailyReceived)
+
+# Usual area chart
+p <- data %>%
+  ggplot( aes(x=date, y=value)) +
+    geom_area(fill="#69b3a2", alpha=0.5) +
+    geom_line(color="#69b3a2") +
+    ylab("Money Received on this Day") +
+    xlab("Date, spanning all of 2018") +
+    theme_ipsum()
+
+# Turn it interactive with ggplotly
+#p <- ggplotly(p)
+#p
+```
+
+
+
+
+In general, it appears that there is a direct positive correlation between days passing and amount of money received, which suggests that Stripe is getting more and more popular and used by more merchants. A weighted average would not do the increased popularity its justice, since it would be taking into account the beginning of the year when less merchants were using Stripe. I do not see any trends of regular time series data, either. 
+
+I will proceed with 'irregular time series' techniques. To make predictions using data WITH a trend but WITHOUT seasonality, double exponential smoothing forecasts – also known as Holt's linear method – can be used for series with trend (but no seasonality). As seen in the plots above, the overall trend is upwards, but there is not a seasonality to the data.
+
+Note: Within holt you can manually set the alpha/beta parameters; however, if you leave those parameters as NULL, the holt function will actually identify the optimal model parameters. (It does this by minimizing AIC and BIC values)
+
+
+```{r}
+# create the time series
+my.ts <- xts(data$value, data$date)
+time_series <- as.ts(my.ts)
+
+# plot the time_series
+holt.ts <- holt(time_series, h = 50)
+autoplot(holt.ts)
+```
+
+Here is the same time series, along the forecast of the next 50 days plotted and the resulting 80% and 95% confidence intervals. (It was only necessary to forecast 1 day ahead for January 1st, but the plot looks better with more days forecasted)
+
+
+```{r, echo=FALSE}
+# holt.ts$model
+
+accuracy(holt.ts) %>% as.data.frame()
+
+# holt.ts
+```
+
+Due to the volatility of this irregular data, and the large measurments of daily money received, our numbers for RMSE and some of the accuracy measuring statistics are very high (not good!). With only 365 observations to train the data on and a huge variance, our forecast for the first day of 2019 will be best served to be a 95% confidence interval instead of just a point estimate, since our point estimate has a large probability of being very far from the truth.
+
+Here is the point estimate, along with the resulting 95% confidence interval, for January 1 2019 using the double smoothing method for this time series data.
+
+```{r}
+# grab the 2 bounds
+df.preds <- as.data.frame(holt.ts)
+lb<-df.preds[1, 4]
+ub<-df.preds[1, 5]
+pe<-df.preds[1, 1]
+
+# print the point estimate
+pe
+
+# interval 95% ci
+interval95 <- c(lb, ub)
+interval95
+```
